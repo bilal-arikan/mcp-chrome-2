@@ -9,6 +9,7 @@ interface NetworkDebuggerStartToolParams {
   maxCaptureTime?: number;
   inactivityTimeout?: number; // Inactivity timeout (milliseconds)
   includeStatic?: boolean; // if include static resources
+  maxRequests?: number; // Max number of requests to capture (see #112)
 }
 
 // Network request object interface
@@ -52,7 +53,8 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
   private lastActivityTime: Map<number, number> = new Map(); // tabId -> timestamp of last network activity
   private pendingResponseBodies: Map<string, Promise<any>> = new Map(); // requestId -> promise for getResponseBody
   private requestCounters: Map<number, number> = new Map(); // tabId -> count of captured requests (after filtering)
-  private static MAX_REQUESTS_PER_CAPTURE = 100; // Max requests to store to prevent memory issues
+  private static DEFAULT_MAX_REQUESTS_PER_CAPTURE = 100; // Default cap to prevent memory issues
+  private static MAX_REQUESTS_HARD_LIMIT = 10000; // Absolute upper bound to protect memory (#112)
   public static instance: NetworkDebuggerStartTool | null = null;
 
   constructor() {
@@ -111,6 +113,9 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
         maxCaptureTime: openerCaptureInfo.maxCaptureTime,
         inactivityTimeout: openerCaptureInfo.inactivityTimeout,
         includeStatic: openerCaptureInfo.includeStatic,
+        maxRequests:
+          openerCaptureInfo.maxRequests ||
+          NetworkDebuggerStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE,
       });
 
       console.log(`NetworkDebuggerStartTool: Successfully extended capture to new tab ${newTabId}`);
@@ -130,9 +135,10 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
       maxCaptureTime: number;
       inactivityTimeout: number;
       includeStatic: boolean;
+      maxRequests: number;
     },
   ): Promise<void> {
-    const { maxCaptureTime, inactivityTimeout, includeStatic } = options;
+    const { maxCaptureTime, inactivityTimeout, includeStatic, maxRequests } = options;
 
     // If already capturing, stop first
     if (this.captureData.has(tabId)) {
@@ -167,6 +173,7 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
         maxCaptureTime,
         inactivityTimeout,
         includeStatic,
+        maxRequests,
         requests: {},
         limitReached: false,
       });
@@ -178,7 +185,7 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
       this.updateLastActivityTime(tabId);
 
       console.log(
-        `NetworkDebuggerStartTool: Started capture for tab ${tabId} (${tab.url}). Max requests: ${NetworkDebuggerStartTool.MAX_REQUESTS_PER_CAPTURE}, Max time: ${maxCaptureTime}ms, Inactivity: ${inactivityTimeout}ms.`,
+        `NetworkDebuggerStartTool: Started capture for tab ${tabId} (${tab.url}). Max requests: ${maxRequests}, Max time: ${maxCaptureTime}ms, Inactivity: ${inactivityTimeout}ms.`,
       );
 
       // Set maximum capture time
@@ -348,8 +355,10 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
     }
 
     const currentCount = this.requestCounters.get(tabId) || 0;
-    if (currentCount >= NetworkDebuggerStartTool.MAX_REQUESTS_PER_CAPTURE) {
-      // console.log(`NetworkDebuggerStartTool: Request limit (${NetworkDebuggerStartTool.MAX_REQUESTS_PER_CAPTURE}) reached for tab ${tabId}. Ignoring: ${request.url}`);
+    const captureLimit =
+      captureInfo.maxRequests || NetworkDebuggerStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE;
+    if (currentCount >= captureLimit) {
+      // console.log(`NetworkDebuggerStartTool: Request limit (${captureLimit}) reached for tab ${tabId}. Ignoring: ${request.url}`);
       captureInfo.limitReached = true; // Mark that limit was hit
       return;
     }
@@ -656,7 +665,7 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
       requests: processedRequests,
       requestCount: processedRequests.length, // Actual stored requests
       totalRequestsReceivedBeforeLimit: captureInfo.limitReached
-        ? NetworkDebuggerStartTool.MAX_REQUESTS_PER_CAPTURE
+        ? captureInfo.maxRequests || NetworkDebuggerStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE
         : processedRequests.length,
       requestLimitReached: !!captureInfo.limitReached,
       stoppedBy: isAutoStop
@@ -772,8 +781,19 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
       includeStatic = false,
     } = args;
 
+    // Resolve and clamp maxRequests: honor the caller's value (#112) but keep a
+    // hard upper bound so a runaway page can't exhaust memory.
+    const requestedMax =
+      typeof args.maxRequests === 'number' && Number.isFinite(args.maxRequests)
+        ? Math.floor(args.maxRequests)
+        : NetworkDebuggerStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE;
+    const maxRequests = Math.max(
+      1,
+      Math.min(requestedMax, NetworkDebuggerStartTool.MAX_REQUESTS_HARD_LIMIT),
+    );
+
     console.log(
-      `NetworkDebuggerStartTool: Executing with args: url=${targetUrl}, maxTime=${maxCaptureTime}, inactivityTime=${inactivityTimeout}, includeStatic=${includeStatic}`,
+      `NetworkDebuggerStartTool: Executing with args: url=${targetUrl}, maxTime=${maxCaptureTime}, inactivityTime=${inactivityTimeout}, includeStatic=${includeStatic}, maxRequests=${maxRequests}`,
     );
 
     let tabToOperateOn: chrome.tabs.Tab | undefined;
@@ -814,6 +834,7 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
           maxCaptureTime,
           inactivityTimeout,
           includeStatic,
+          maxRequests,
         });
       } catch (error: any) {
         return createErrorResponse(
@@ -833,7 +854,7 @@ class NetworkDebuggerStartTool extends BaseBrowserToolExecutor {
               maxCaptureTime,
               inactivityTimeout,
               includeStatic,
-              maxRequests: NetworkDebuggerStartTool.MAX_REQUESTS_PER_CAPTURE,
+              maxRequests,
             }),
           },
         ],

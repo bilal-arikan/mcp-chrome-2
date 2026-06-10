@@ -50,6 +50,7 @@ interface NetworkCaptureStartToolParams {
   maxCaptureTime?: number; // Maximum capture time (milliseconds)
   inactivityTimeout?: number; // Inactivity timeout (milliseconds)
   includeStatic?: boolean; // Whether to include static resources
+  maxRequests?: number; // Max number of requests to capture (see #112)
 }
 
 interface NetworkRequestInfo {
@@ -83,6 +84,7 @@ interface CaptureInfo {
   maxCaptureTime: number;
   inactivityTimeout: number;
   includeStatic: boolean;
+  maxRequests?: number; // Per-capture request cap (see #112)
   limitReached?: boolean; // Whether request count limit is reached
 }
 
@@ -97,7 +99,8 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
   private inactivityTimers: Map<number, NodeJS.Timeout> = new Map(); // tabId -> inactivity timer
   private lastActivityTime: Map<number, number> = new Map(); // tabId -> timestamp of last activity
   private requestCounters: Map<number, number> = new Map(); // tabId -> count of captured requests
-  public static MAX_REQUESTS_PER_CAPTURE = LIMITS.MAX_NETWORK_REQUESTS; // Maximum capture request count
+  public static DEFAULT_MAX_REQUESTS_PER_CAPTURE = LIMITS.MAX_NETWORK_REQUESTS; // Default request cap
+  public static MAX_REQUESTS_HARD_LIMIT = 10000; // Absolute upper bound (#112)
   private listeners: { [key: string]: (details: any) => void } = {};
 
   // Static resource MIME types list (for filtering)
@@ -192,6 +195,8 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
         maxCaptureTime: openerCaptureInfo.maxCaptureTime,
         inactivityTimeout: openerCaptureInfo.inactivityTimeout,
         includeStatic: openerCaptureInfo.includeStatic,
+        maxRequests:
+          openerCaptureInfo.maxRequests || NetworkCaptureStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE,
       });
 
       console.log(`NetworkCaptureV2: Successfully extended capture to new tab ${newTabId}`);
@@ -363,9 +368,11 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
       }
 
       const currentCount = this.requestCounters.get(details.tabId) || 0;
-      if (currentCount >= NetworkCaptureStartTool.MAX_REQUESTS_PER_CAPTURE) {
+      const captureLimit =
+        captureInfo.maxRequests || NetworkCaptureStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE;
+      if (currentCount >= captureLimit) {
         console.log(
-          `NetworkCaptureV2: Request limit (${NetworkCaptureStartTool.MAX_REQUESTS_PER_CAPTURE}) reached for tab ${details.tabId}, ignoring new request: ${details.url}`,
+          `NetworkCaptureV2: Request limit (${captureLimit}) reached for tab ${details.tabId}, ignoring new request: ${details.url}`,
         );
         captureInfo.limitReached = true;
         return;
@@ -391,7 +398,7 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
         }
 
         console.log(
-          `NetworkCaptureV2: Captured request ${currentCount + 1}/${NetworkCaptureStartTool.MAX_REQUESTS_PER_CAPTURE} for tab ${details.tabId}: ${details.method} ${details.url}`,
+          `NetworkCaptureV2: Captured request ${currentCount + 1}/${captureLimit} for tab ${details.tabId}: ${details.method} ${details.url}`,
         );
       }
     };
@@ -565,9 +572,10 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
       maxCaptureTime: number;
       inactivityTimeout: number;
       includeStatic: boolean;
+      maxRequests: number;
     },
   ): Promise<void> {
-    const { maxCaptureTime, inactivityTimeout, includeStatic } = options;
+    const { maxCaptureTime, inactivityTimeout, includeStatic, maxRequests } = options;
 
     // If already capturing, stop first
     if (this.captureData.has(tabId)) {
@@ -591,6 +599,7 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
         maxCaptureTime,
         inactivityTimeout,
         includeStatic,
+        maxRequests,
         limitReached: false,
       });
 
@@ -604,7 +613,7 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
       this.updateLastActivityTime(tabId);
 
       console.log(
-        `NetworkCaptureV2: Started capture for tab ${tabId} (${tab.url}). Max requests: ${NetworkCaptureStartTool.MAX_REQUESTS_PER_CAPTURE}, Max time: ${maxCaptureTime}ms, Inactivity: ${inactivityTimeout}ms.`,
+        `NetworkCaptureV2: Started capture for tab ${tabId} (${tab.url}). Max requests: ${maxRequests}, Max time: ${maxCaptureTime}ms, Inactivity: ${inactivityTimeout}ms.`,
       );
 
       // Set maximum capture time
@@ -695,7 +704,8 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
           maxCaptureTime: captureInfo.maxCaptureTime,
           inactivityTimeout: captureInfo.inactivityTimeout,
           includeStatic: captureInfo.includeStatic,
-          maxRequests: NetworkCaptureStartTool.MAX_REQUESTS_PER_CAPTURE,
+          maxRequests:
+            captureInfo.maxRequests || NetworkCaptureStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE,
         },
         commonRequestHeaders,
         commonResponseHeaders,
@@ -794,6 +804,17 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
       includeStatic = false, // Default: don't include static resources
     } = args;
 
+    // Resolve and clamp maxRequests: honor the caller's value (#112) but keep a
+    // hard upper bound to protect memory.
+    const requestedMax =
+      typeof args.maxRequests === 'number' && Number.isFinite(args.maxRequests)
+        ? Math.floor(args.maxRequests)
+        : NetworkCaptureStartTool.DEFAULT_MAX_REQUESTS_PER_CAPTURE;
+    const maxRequests = Math.max(
+      1,
+      Math.min(requestedMax, NetworkCaptureStartTool.MAX_REQUESTS_HARD_LIMIT),
+    );
+
     console.log(`NetworkCaptureStartTool: Executing with args:`, args);
 
     try {
@@ -835,6 +856,7 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
           maxCaptureTime,
           inactivityTimeout,
           includeStatic,
+          maxRequests,
         });
       } catch (error: any) {
         return createErrorResponse(
@@ -854,7 +876,7 @@ class NetworkCaptureStartTool extends BaseBrowserToolExecutor {
               maxCaptureTime,
               inactivityTimeout,
               includeStatic,
-              maxRequests: NetworkCaptureStartTool.MAX_REQUESTS_PER_CAPTURE,
+              maxRequests,
             }),
           },
         ],
