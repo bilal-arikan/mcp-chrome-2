@@ -17,6 +17,16 @@ const RECONNECT_MAX_DELAY_MS = 60_000;
 const RECONNECT_MAX_FAST_ATTEMPTS = 8;
 const RECONNECT_COOLDOWN_DELAY_MS = 5 * 60_000;
 
+// ==================== Liveness / Wake Configuration ====================
+
+// Periodic connection health check. After the machine sleeps/resumes, a native
+// port can become "half-open": Chrome still hands us a non-null port object but
+// the underlying pipe is dead and onDisconnect never fires, so reconnect is
+// never scheduled and the connection hangs. A periodic probe detects this and
+// forces a clean reconnect. See hangwin/mcp-chrome (sleep/resume disconnects).
+const HEALTH_CHECK_ALARM = 'native-host-health-check';
+const HEALTH_CHECK_PERIOD_MINUTES = 1;
+
 // ==================== Auto-connect State ====================
 
 let keepaliveRelease: (() => void) | null = null;
@@ -271,6 +281,63 @@ async function markServerStopped(reason: string): Promise<void> {
   console.debug(`${LOG_PREFIX} Server marked stopped (${reason})`);
 }
 
+// ==================== Connection Liveness ====================
+
+/**
+ * Force-drop the current native port and schedule a reconnect.
+ * Used when we detect a half-open ("zombie") connection that won't recover on
+ * its own — e.g. after the machine resumes from sleep.
+ */
+function forceReconnect(reason: string): void {
+  const hadPort = nativePort !== null;
+  if (nativePort) {
+    try {
+      nativePort.disconnect();
+    } catch {
+      // Ignore — the port may already be dead
+    }
+    nativePort = null;
+  }
+  void markServerStopped(reason);
+  if (!manualDisconnect && autoConnectEnabled) {
+    // Reset attempts so recovery after wake is immediate, not in cooldown.
+    reconnectAttempts = 0;
+    clearReconnectTimer();
+    if (hadPort) {
+      void ensureNativeConnected(`force_reconnect:${reason}`).catch(() => {});
+    } else {
+      scheduleReconnect(reason);
+    }
+  }
+}
+
+/**
+ * Probe the native connection to detect a half-open port. Writing to a dead
+ * port throws (or triggers onDisconnect); if it throws we treat the port as a
+ * zombie and force a clean reconnect. If there is no port at all, ensure one.
+ */
+function checkConnectionHealth(reason: string): void {
+  if (manualDisconnect || !autoConnectEnabled) return;
+
+  if (!nativePort) {
+    // No connection — make sure the reconnect machinery is running.
+    if (!reconnectTimer) {
+      void ensureNativeConnected(`health_check:${reason}`).catch(() => {});
+    }
+    return;
+  }
+
+  try {
+    // A lightweight liveness probe. On a half-open port this throws
+    // synchronously or makes Chrome fire onDisconnect shortly after.
+    // The native host recognizes 'ping_from_extension' and replies with a pong.
+    nativePort.postMessage({ type: 'ping_from_extension' });
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Health probe failed (${reason}); forcing reconnect`, error);
+    forceReconnect(`health_probe_failed:${reason}`);
+  }
+}
+
 // ==================== Core Ensure Function ====================
 
 /**
@@ -489,6 +556,37 @@ export const initNativeHostListener = () => {
   chrome.runtime.onInstalled.addListener(() => {
     void ensureNativeConnected('onInstalled').catch(() => {});
   });
+
+  // Recover the connection when the machine wakes from sleep / the user returns.
+  // The 'active' transition is the key signal after a system resume, when a
+  // native port may have silently died without firing onDisconnect.
+  if (chrome.idle?.onStateChanged) {
+    // Detect idle after 60s so 'active' reliably fires on resume.
+    try {
+      chrome.idle.setDetectionInterval(60);
+    } catch {
+      // Ignore — not critical
+    }
+    chrome.idle.onStateChanged.addListener((state) => {
+      if (state === 'active') {
+        checkConnectionHealth('idle_active');
+      }
+    });
+  }
+
+  // Periodic liveness probe to catch half-open ports that never fire
+  // onDisconnect (typical after sleep/resume). chrome.alarms survives SW
+  // suspension, unlike setInterval.
+  if (chrome.alarms) {
+    chrome.alarms.create(HEALTH_CHECK_ALARM, {
+      periodInMinutes: HEALTH_CHECK_PERIOD_MINUTES,
+    });
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm.name === HEALTH_CHECK_ALARM) {
+        checkConnectionHealth('periodic_alarm');
+      }
+    });
+  }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // Allow UI to call tools directly
