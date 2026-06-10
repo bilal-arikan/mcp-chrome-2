@@ -9,6 +9,18 @@ interface HandleDialogParams {
 }
 
 /**
+ * Detect the "another debugger already owns this tab" condition so the dialog
+ * tool can return an actionable, structured response instead of an opaque
+ * failure. See hangwin/mcp-chrome#309.
+ */
+function isDebuggerConflictError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Debugger is already attached|Another debugger is already attached|Cannot attach to this target|already attached by another client/i.test(
+    message,
+  );
+}
+
+/**
  * Handle JavaScript dialogs (alert/confirm/prompt) via CDP Page.handleJavaScriptDialog
  */
 class HandleDialogTool extends BaseBrowserToolExecutor {
@@ -44,6 +56,27 @@ class HandleDialogTool extends BaseBrowserToolExecutor {
         isError: false,
       };
     } catch (error) {
+      // When another client (DevTools or another extension) owns the debugger,
+      // return a structured, non-fatal contract so automation can recover
+      // (e.g. by closing DevTools) instead of seeing an opaque failure. #309
+      if (isDebuggerConflictError(error)) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                reason: 'debugger_conflict',
+                action,
+                message:
+                  'Cannot handle the dialog because the Chrome debugger is already attached by another client (DevTools or another extension). Close DevTools / detach the other debugger on this tab and retry.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
       return createErrorResponse(
         `Failed to handle dialog: ${error instanceof Error ? error.message : String(error)}`,
       );
