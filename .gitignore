@@ -47,3 +47,5 @@ CLAUDE.md
 
 .docs/
 .claude/
+# Extension signing keys (never commit private key)
+.keys/

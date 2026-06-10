@@ -10,7 +10,17 @@ import IconsResolver from 'unplugin-icons/resolver';
 config({ path: resolve(process.cwd(), '.env') });
 config({ path: resolve(process.cwd(), '.env.local') });
 
-const CHROME_EXTENSION_KEY = process.env.CHROME_EXTENSION_KEY;
+// Pinning the manifest "key" makes the unpacked extension ID stable across
+// reloads, rebuilds, and folder moves. Without it Chrome derives the ID from
+// the install path, so it changes and breaks the native-messaging host's
+// allowed_origins whitelist. This default public key yields the fixed ID
+// "ofjcofiidpnlbiocjojaabanlmfbljmm", which the native host's EXTENSION_ID is
+// aligned to. Override via CHROME_EXTENSION_KEY env to use a different key
+// (e.g. the official store key). The matching private key lives in .keys/
+// (gitignored) and is only needed to produce a signed .crx for distribution.
+const DEFAULT_EXTENSION_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuBuNR7hBM04hyvOGV6/ns5WlxGPJ/7AWZUTxYVujGd0biaaB6VQzwHPU0gmFK2g2fbS7eYBmEr4cAans69RIBvGYx66niloZvyoIhjaTCfE4wM61LB7nXkXWFZkhG/Oh+C1ak+34pFswgql0JKCog5FZeCiGUZEdiEsK+eYaPnNhrcNfnh9F4gmT6svyfbHMye9DX8s/jBorYCV3sw6FMJ6Hftdn81E7LKg7/eDg+N7wvgRHGJsC7G+gccZd+1i1xQF8rlf6mNU88Wff0+GJ0P35WO3mcNGX1unDw07JKMGpxBlCeJPZsQhQVG09gdrO3nTd/n4ourWZG/kd4Ti3mwIDAQAB';
+const CHROME_EXTENSION_KEY = process.env.CHROME_EXTENSION_KEY || DEFAULT_EXTENSION_KEY;
 // Detect dev mode early for manifest-level switches
 const IS_DEV = process.env.NODE_ENV !== 'production' && process.env.MODE !== 'production';
 
