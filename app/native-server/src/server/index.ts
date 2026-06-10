@@ -250,6 +250,23 @@ export class Server {
 
       if (transport) {
         // Transport found, proceed
+      } else if (sessionId) {
+        // A session id was supplied but no live transport exists for it. This
+        // happens when the bridge process restarted (e.g. after a Chrome update
+        // or reconnect) while the client still holds an old mcp-session-id.
+        // Per the MCP spec an unknown/expired session must return 404 so the
+        // client tears down its session and re-initializes, instead of getting
+        // stuck on an opaque "Invalid MCP request or session" 400.
+        // See hangwin/mcp-chrome#288.
+        reply.code(HTTP_STATUS.NOT_FOUND).send({
+          jsonrpc: '2.0',
+          error: {
+            code: -32001,
+            message: 'Session not found or expired. Re-initialize the MCP session.',
+          },
+          id: null,
+        });
+        return;
       } else if (!sessionId && isInitializeRequest(request.body)) {
         const newSessionId = randomUUID();
         transport = new StreamableHTTPServerTransport({
