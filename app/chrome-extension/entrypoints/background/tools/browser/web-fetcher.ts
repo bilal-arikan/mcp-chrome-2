@@ -11,6 +11,50 @@ interface WebFetcherToolParams {
   tabId?: number; // target existing tab id
   background?: boolean; // do not activate/focus
   windowId?: number; // target window id to pick active tab or create tab
+  // Wait for the page to finish loading before reading content (see #259)
+  waitForLoad?: boolean; // wait until tab status is 'complete' (default: true)
+  waitTimeout?: number; // max ms to wait for load (default: 10000)
+  waitForSelector?: string; // additionally wait until this CSS selector appears
+}
+
+const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+
+/**
+ * Wait until a tab reaches status 'complete', or the timeout elapses.
+ * Resolves regardless so callers can still attempt to read whatever is present.
+ * See hangwin/mcp-chrome#259.
+ */
+async function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'complete') return;
+  } catch {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        chrome.tabs.onUpdated.removeListener(listener);
+      } catch {
+        // Ignore
+      }
+      clearTimeout(timer);
+      resolve();
+    };
+
+    const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+        finish();
+      }
+    };
+
+    const timer = setTimeout(finish, Math.max(0, timeoutMs));
+    chrome.tabs.onUpdated.addListener(listener);
+  });
 }
 
 class WebFetcherTool extends BaseBrowserToolExecutor {
@@ -28,6 +72,12 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
     const explicitTabId = args.tabId;
     const background = args.background === true;
     const windowId = args.windowId;
+    const waitForLoad = args.waitForLoad !== false; // default: true
+    const waitTimeout =
+      typeof args.waitTimeout === 'number' && Number.isFinite(args.waitTimeout)
+        ? Math.max(0, Math.floor(args.waitTimeout))
+        : DEFAULT_WAIT_TIMEOUT_MS;
+    const waitForSelector = args.waitForSelector;
 
     console.log(`Starting web fetcher with options:`, {
       htmlContent,
@@ -64,9 +114,12 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
           console.log(`No existing tab found with URL: ${url}, creating new tab`);
           tab = await chrome.tabs.create({ url, active: background ? false : true });
 
-          // Wait for page to load
-          console.log('Waiting for page to load...');
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          // Wait for the page to actually finish loading instead of a fixed
+          // delay, so slow pages don't return empty content. See #259.
+          if (waitForLoad && tab.id) {
+            console.log('Waiting for page to load...');
+            await waitForTabComplete(tab.id, waitTimeout);
+          }
         }
       } else {
         // Use active tab (prefer specified window)
@@ -84,6 +137,12 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
         return createErrorResponse('Tab has no ID');
       }
 
+      // Ensure the page has finished loading before reading, so content from a
+      // still-loading tab isn't returned empty/partial. See #259.
+      if (waitForLoad) {
+        await waitForTabComplete(tab.id, waitTimeout);
+      }
+
       // Optionally bring tab/window to foreground
       if (!background) {
         await chrome.tabs.update(tab.id, { active: true });
@@ -98,6 +157,11 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
       };
 
       await this.injectContentScript(tab.id, ['inject-scripts/web-fetcher-helper.js']);
+
+      // Optionally wait for a specific element to appear before reading (#259).
+      if (waitForSelector) {
+        await this.waitForSelectorInTab(tab.id, waitForSelector, waitTimeout);
+      }
 
       // Get HTML content if requested
       if (htmlContent) {
@@ -161,6 +225,39 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
       return createErrorResponse(
         `Error fetching web content: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  /**
+   * Poll the page until the given CSS selector exists or the timeout elapses.
+   * Best-effort: resolves regardless so reading can still proceed. See #259.
+   */
+  private async waitForSelectorInTab(
+    tabId: number,
+    selector: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    const POLL_INTERVAL_MS = 200;
+
+    // Loop in the background; each probe runs a tiny script in the page.
+    // We re-check Date.now() here (in the SW) rather than inside the page so we
+    // don't depend on the page clock.
+
+    while (true) {
+      try {
+        const [injection] = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'ISOLATED',
+          func: (sel: string) => !!document.querySelector(sel),
+          args: [selector],
+        });
+        if (injection?.result === true) return;
+      } catch {
+        // Page may be mid-navigation; keep trying until the deadline.
+      }
+      if (Date.now() >= deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
   }
 }

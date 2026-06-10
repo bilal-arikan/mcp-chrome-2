@@ -557,6 +557,20 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'CSS selector to get content from a specific element. If provided, only content from this element will be returned',
         },
+        waitForLoad: {
+          type: 'boolean',
+          description:
+            "Wait until the page finishes loading (tab status 'complete') before reading, so slow pages don't return empty content (default: true).",
+        },
+        waitTimeout: {
+          type: 'number',
+          description: 'Max milliseconds to wait for load / waitForSelector (default: 10000).',
+        },
+        waitForSelector: {
+          type: 'string',
+          description:
+            'Additionally wait until this CSS selector appears in the page before reading. Useful for content rendered after initial load.',
+        },
       },
       required: [],
     },
@@ -629,6 +643,11 @@ export const TOOL_SCHEMAS: Tool[] = [
         includeStatic: {
           type: 'boolean',
           description: 'Include static resources like images/scripts/styles (default: false)',
+        },
+        maxRequests: {
+          type: 'number',
+          description:
+            'Maximum number of requests to capture (default: 100, max: 10000). For action="start".',
         },
       },
       required: ['action'],
