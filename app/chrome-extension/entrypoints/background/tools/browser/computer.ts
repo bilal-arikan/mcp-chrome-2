@@ -845,8 +845,6 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
       }
       case 'scroll': {
-        if (!params.coordinates && !params.ref)
-          return createErrorResponse('Provide ref or coordinates for scroll');
         let coord = params.coordinates ? project(params.coordinates)! : (undefined as any);
         if (params.ref) {
           try {
@@ -859,6 +857,29 @@ class ComputerTool extends BaseBrowserToolExecutor {
               coord = project({ x: resolved.center.x, y: resolved.center.y })!;
           } catch {
             // ignore
+          }
+        }
+        // A plain "scroll down/up" with no ref or coordinates should just scroll
+        // the page. Default the wheel anchor to the viewport center instead of
+        // failing. See hangwin/mcp-chrome#232.
+        if (!coord) {
+          try {
+            await CDPHelper.attach(tab.id);
+            try {
+              const metrics: any = await CDPHelper.send(tab.id, 'Page.getLayoutMetrics');
+              const vp = metrics?.visualViewport || metrics?.layoutViewport;
+              const vw = Number(vp?.clientWidth) || 0;
+              const vh = Number(vp?.clientHeight) || 0;
+              if (vw > 0 && vh > 0) {
+                coord = { x: Math.floor(vw / 2), y: Math.floor(vh / 2) };
+              }
+            } finally {
+              // Balance the refcounted attach above; the wheel dispatch below
+              // re-attaches as needed.
+              await CDPHelper.detach(tab.id);
+            }
+          } catch {
+            // ignore; handled by the guard below
           }
         }
         if (!coord) return createErrorResponse('Failed to resolve scroll coordinates');
