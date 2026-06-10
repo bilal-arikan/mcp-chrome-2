@@ -114,7 +114,43 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
   }
 };
 
+/**
+ * Ensure this process exits when its parent (e.g. the MCP client that spawned
+ * it) goes away. Without this, stdio servers accumulate as zombies because they
+ * keep running after the parent closes the stdin pipe.
+ *
+ * Two independent mechanisms are used for reliability:
+ *   1. stdin 'end'/'close' — the standard Unix contract: when the parent dies
+ *      the pipe closes and the child receives EOF.
+ *   2. A parent-PID watchdog — a fallback for cases where the stdin close event
+ *      does not fire (e.g. a detached process).
+ *
+ * See hangwin/mcp-chrome#300.
+ */
+function installParentExitHandlers() {
+  const exitCleanly = () => process.exit(0);
+
+  process.stdin.on('end', exitCleanly);
+  process.stdin.on('close', exitCleanly);
+
+  const parentPid = process.ppid;
+  if (parentPid && parentPid > 1) {
+    const parentCheck = setInterval(() => {
+      try {
+        // Signal 0 performs no action but throws if the process does not exist.
+        process.kill(parentPid, 0);
+      } catch {
+        clearInterval(parentCheck);
+        process.exit(0);
+      }
+    }, 10000);
+    // Don't keep the event loop alive just for this timer.
+    parentCheck.unref();
+  }
+}
+
 async function main() {
+  installParentExitHandlers();
   const transport = new StdioServerTransport();
   await getStdioMcpServer().connect(transport);
 }
