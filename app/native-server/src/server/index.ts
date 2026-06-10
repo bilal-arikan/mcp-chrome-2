@@ -110,9 +110,19 @@ export class Server {
 
   private setupHealthRoutes(): void {
     this.fastify.get('/ping', async (_request: FastifyRequest, reply: FastifyReply) => {
+      // /ping reflects bridge liveness AND whether the Chrome extension is
+      // actually responsive. Previously this always returned "ok" even after
+      // the extension disconnected, masking stale connections. See #351.
+      const extension = this.nativeHost?.getExtensionConnectionStatus() ?? {
+        connected: false,
+        lastSeenMsAgo: null,
+      };
+
       reply.status(HTTP_STATUS.OK).send({
         status: 'ok',
         message: 'pong',
+        extensionConnected: extension.connected,
+        extensionLastSeenMsAgo: extension.lastSeenMsAgo,
       });
     });
   }
@@ -167,6 +177,9 @@ export class Server {
   private setupMcpRoutes(): void {
     // SSE endpoint
     this.fastify.get('/sse', async (_, reply) => {
+      // The SSE transport owns the raw socket; take it away from Fastify so it
+      // does not also attempt to write headers. See #349.
+      reply.hijack();
       try {
         reply.raw.writeHead(HTTP_STATUS.OK, {
           'Content-Type': 'text/event-stream',
@@ -177,17 +190,27 @@ export class Server {
         const transport = new SSEServerTransport('/messages', reply.raw);
         this.transportsMap.set(transport.sessionId, transport);
 
+        // Each connection gets its own MCP Server instance so that connecting a
+        // second client does not orphan the first client's transport.
+        // See hangwin/mcp-chrome#321 and #345.
+        const server = getMcpServer();
+
         reply.raw.on('close', () => {
           this.transportsMap.delete(transport.sessionId);
+          void server.close().catch(() => undefined);
         });
 
-        const server = getMcpServer();
         await server.connect(transport);
 
         reply.raw.write(':\n\n');
       } catch (error) {
-        if (!reply.sent) {
-          reply.code(HTTP_STATUS.INTERNAL_SERVER_ERROR).send(ERROR_MESSAGES.INTERNAL_SERVER_ERROR);
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            'Content-Type': 'text/plain',
+          });
+          reply.raw.end(ERROR_MESSAGES.INTERNAL_SERVER_ERROR);
+        } else if (!reply.raw.writableEnded) {
+          reply.raw.end();
         }
       }
     });
@@ -202,10 +225,18 @@ export class Server {
           return;
         }
 
+        // The transport writes directly to the raw response; hand the socket off
+        // to it so Fastify does not also try to respond. See #349.
+        reply.hijack();
         await transport.handlePostMessage(req.raw, reply.raw, req.body);
       } catch (error) {
-        if (!reply.sent) {
-          reply.code(HTTP_STATUS.INTERNAL_SERVER_ERROR).send(ERROR_MESSAGES.INTERNAL_SERVER_ERROR);
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            'Content-Type': 'text/plain',
+          });
+          reply.raw.end(ERROR_MESSAGES.INTERNAL_SERVER_ERROR);
+        } else if (!reply.raw.writableEnded) {
+          reply.raw.end();
         }
       }
     });
@@ -230,24 +261,41 @@ export class Server {
           },
         });
 
+        // Each connection gets its own MCP Server instance so that connecting a
+        // second client does not orphan the first client's transport.
+        // See hangwin/mcp-chrome#321 and #345.
+        const server = getMcpServer();
+
         transport.onclose = () => {
           if (transport?.sessionId && this.transportsMap.get(transport.sessionId)) {
             this.transportsMap.delete(transport.sessionId);
           }
+          void server.close().catch(() => undefined);
         };
-        await getMcpServer().connect(transport);
+        await server.connect(transport);
       } else {
         reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_MCP_REQUEST });
         return;
       }
 
+      // The MCP transport writes directly to the raw Node response, so take
+      // control of the socket away from Fastify. Without hijacking, Fastify may
+      // also try to send a response, producing duplicate writeHead() calls and
+      // ERR_HTTP_HEADERS_SENT. See hangwin/mcp-chrome#349.
+      reply.hijack();
+
       try {
         await transport.handleRequest(request.raw, reply.raw, request.body);
       } catch (error) {
-        if (!reply.sent) {
-          reply
-            .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-            .send({ error: ERROR_MESSAGES.MCP_REQUEST_PROCESSING_ERROR });
+        // Only write a fallback error if the transport has not already begun the
+        // response; otherwise writeHead() would throw ERR_HTTP_HEADERS_SENT.
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            'Content-Type': 'application/json',
+          });
+          reply.raw.end(JSON.stringify({ error: ERROR_MESSAGES.MCP_REQUEST_PROCESSING_ERROR }));
+        } else if (!reply.raw.writableEnded) {
+          reply.raw.end();
         }
       }
     });
@@ -264,6 +312,9 @@ export class Server {
         return;
       }
 
+      // Hand the socket off to the transport before writing any headers so
+      // Fastify never tries to respond on top of it. See #349.
+      reply.hijack();
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache');
       reply.raw.setHeader('Connection', 'keep-alive');
@@ -271,9 +322,6 @@ export class Server {
 
       try {
         await transport.handleRequest(request.raw, reply.raw);
-        if (!reply.sent) {
-          reply.hijack();
-        }
       } catch (error) {
         if (!reply.raw.writableEnded) {
           reply.raw.end();
@@ -297,16 +345,25 @@ export class Server {
         return;
       }
 
+      // The transport writes the response on the raw socket; hijack so Fastify
+      // does not also respond and trigger ERR_HTTP_HEADERS_SENT. See #349.
+      reply.hijack();
       try {
         await transport.handleRequest(request.raw, reply.raw);
-        if (!reply.sent) {
-          reply.code(HTTP_STATUS.NO_CONTENT).send();
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(HTTP_STATUS.NO_CONTENT);
+          reply.raw.end();
+        } else if (!reply.raw.writableEnded) {
+          reply.raw.end();
         }
       } catch (error) {
-        if (!reply.sent) {
-          reply
-            .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-            .send({ error: ERROR_MESSAGES.MCP_SESSION_DELETION_ERROR });
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            'Content-Type': 'application/json',
+          });
+          reply.raw.end(JSON.stringify({ error: ERROR_MESSAGES.MCP_SESSION_DELETION_ERROR }));
+        } else if (!reply.raw.writableEnded) {
+          reply.raw.end();
         }
       }
     });
