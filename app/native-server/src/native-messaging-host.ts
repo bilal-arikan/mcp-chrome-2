@@ -15,8 +15,41 @@ export class NativeMessagingHost {
   private associatedServer: Server | null = null;
   private pendingRequests: Map<string, PendingRequest> = new Map();
 
+  // Liveness tracking for the Chrome extension. The native host talks to the
+  // extension over stdin/stdout; if the extension is disconnected the stdio
+  // pipe stays open (Chrome keeps the native host alive), so the only reliable
+  // signal that the extension itself is responsive is the last message we
+  // received from it. See hangwin/mcp-chrome#351.
+  private lastExtensionMessageAt: number | null = null;
+  // The extension is considered stale if no message has been seen within this
+  // window. The extension sends periodic ping_from_extension heartbeats.
+  private static readonly EXTENSION_STALE_THRESHOLD_MS = 30_000;
+
   public setServer(serverInstance: Server): void {
     this.associatedServer = serverInstance;
+  }
+
+  /**
+   * Report the current Chrome extension connection health. Used by the /ping
+   * health endpoint so callers can distinguish "bridge is up" from
+   * "bridge is up AND the extension is actually responding". See #351.
+   */
+  public getExtensionConnectionStatus(): {
+    connected: boolean;
+    lastSeenMsAgo: number | null;
+  } {
+    if (this.lastExtensionMessageAt === null) {
+      return { connected: false, lastSeenMsAgo: null };
+    }
+    const lastSeenMsAgo = Date.now() - this.lastExtensionMessageAt;
+    return {
+      connected: lastSeenMsAgo <= NativeMessagingHost.EXTENSION_STALE_THRESHOLD_MS,
+      lastSeenMsAgo,
+    };
+  }
+
+  private markExtensionSeen(): void {
+    this.lastExtensionMessageAt = Date.now();
   }
 
   // add message handler to wait for start server
@@ -97,6 +130,9 @@ export class NativeMessagingHost {
       this.sendError('Invalid message format');
       return;
     }
+
+    // Any well-formed message from the extension counts as a liveness signal. #351
+    this.markExtensionSeen();
 
     if (message.responseToRequestId) {
       const requestId = message.responseToRequestId;
@@ -200,7 +236,23 @@ export class NativeMessagingHost {
 
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(requestId); // Remove from Map after timeout
-        reject(new Error(`Request timed out after ${timeoutMs}ms`));
+        // Surface why the timeout likely happened instead of a bare "timed out",
+        // so callers can tell a slow tool apart from a disconnected extension.
+        // See hangwin/mcp-chrome#352.
+        const { connected, lastSeenMsAgo } = this.getExtensionConnectionStatus();
+        let hint: string;
+        if (!connected) {
+          hint =
+            lastSeenMsAgo === null
+              ? ' The Chrome extension has never connected to this bridge — make sure it is installed and "Connect" is enabled in the extension popup.'
+              : ` The Chrome extension appears disconnected (last seen ${Math.round(
+                  lastSeenMsAgo / 1000,
+                )}s ago) — re-open the extension popup and click Connect.`;
+        } else {
+          hint =
+            ' The extension is connected but did not respond in time — the target tab may be closed, navigating, or the requested action is still running.';
+        }
+        reject(new Error(`Request timed out after ${timeoutMs}ms.${hint}`));
       }, timeoutMs);
 
       // Store request's resolve/reject functions and timeout ID
