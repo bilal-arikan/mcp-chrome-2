@@ -11,6 +11,7 @@ export const TOOL_NAMES = {
     WEB_FETCHER: 'chrome_get_web_content',
     CLICK: 'chrome_click_element',
     FILL: 'chrome_fill_or_select',
+    PASTE_CLIPBOARD: 'chrome_paste_clipboard',
     REQUEST_ELEMENT_SELECTION: 'chrome_request_element_selection',
     GET_INTERACTIVE_ELEMENTS: 'chrome_get_interactive_elements',
     NETWORK_CAPTURE: 'chrome_network_capture',
@@ -993,6 +994,40 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['value'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.PASTE_CLIPBOARD,
+    description:
+      "Paste the system clipboard text into an input on the page. If no selector/ref is given, it pastes into the currently focused element (e.g. where the user's cursor is). Reads the clipboard without injecting scripts, so it is not blocked by page CSP.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: {
+          type: 'string',
+          description:
+            'Optional CSS selector for the target input. If omitted, the currently focused element is used.',
+        },
+        ref: {
+          type: 'string',
+          description:
+            'Optional element ref from chrome_read_page (takes precedence over selector).',
+        },
+        text: {
+          type: 'string',
+          description:
+            'Optional explicit text to paste instead of reading the system clipboard. Use this when the clipboard cannot be read.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target tab ID. If omitted, uses the current active tab.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Window ID to select active tab from (when tabId is omitted).',
+        },
+      },
+      required: [],
     },
   },
   {

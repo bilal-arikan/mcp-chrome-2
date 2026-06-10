@@ -64,6 +64,7 @@ export default defineConfig({
       'declarativeNetRequest',
       'alarms',
       'idle',
+      'clipboardRead',
       // Allow programmatic control of Chrome Side Panel
       'sidePanel',
     ],
