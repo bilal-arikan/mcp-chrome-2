@@ -16,6 +16,7 @@ import {
   SERVER_CONFIG,
   HTTP_STATUS,
   ERROR_MESSAGES,
+  getServerBindHost,
 } from '../constant';
 import { NativeMessagingHost } from '../native-messaging-host';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -402,7 +403,9 @@ export class Server {
     }
 
     try {
-      await this.fastify.listen({ port, host: SERVER_CONFIG.HOST });
+      // Bind host is configurable via CHROME_MCP_HOST (default 127.0.0.1).
+      // Set it to 0.0.0.0 to expose the bridge on the LAN. See #290.
+      await this.fastify.listen({ port, host: getServerBindHost() });
 
       // Set port environment variables after successful listen for Chrome MCP URL resolution
       process.env.CHROME_MCP_PORT = String(port);

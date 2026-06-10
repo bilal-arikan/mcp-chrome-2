@@ -64,6 +64,16 @@ export const CHROME_MCP_PORT_ENV = 'CHROME_MCP_PORT';
 export const MCP_HTTP_PORT_ENV = 'MCP_HTTP_PORT';
 
 /**
+ * Environment variable to override the interface the server binds to.
+ * Defaults to 127.0.0.1 (loopback only). Set to 0.0.0.0 to expose the bridge
+ * to other machines on the LAN. See hangwin/mcp-chrome#290.
+ *
+ * SECURITY: binding to 0.0.0.0 makes the browser-automation API reachable from
+ * the network. Only enable it on trusted networks.
+ */
+export const CHROME_MCP_HOST_ENV = 'CHROME_MCP_HOST';
+
+/**
  * Get the actual port the Chrome MCP server is listening on.
  * Priority: CHROME_MCP_PORT env > MCP_HTTP_PORT env > NATIVE_SERVER_PORT default
  */
@@ -71,6 +81,16 @@ export function getChromeMcpPort(): number {
   const raw = process.env[CHROME_MCP_PORT_ENV] || process.env[MCP_HTTP_PORT_ENV];
   const port = raw ? Number.parseInt(String(raw), 10) : NaN;
   return Number.isFinite(port) && port > 0 && port <= 65535 ? port : NATIVE_SERVER_PORT;
+}
+
+/**
+ * Get the interface the server should bind to.
+ * Priority: CHROME_MCP_HOST env > SERVER_CONFIG.HOST default (127.0.0.1).
+ */
+export function getServerBindHost(): string {
+  const raw = process.env[CHROME_MCP_HOST_ENV];
+  const host = typeof raw === 'string' ? raw.trim() : '';
+  return host.length > 0 ? host : SERVER_CONFIG.HOST;
 }
 
 /**
