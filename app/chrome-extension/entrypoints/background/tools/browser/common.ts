@@ -146,6 +146,23 @@ class NavigateTool extends BaseBrowserToolExecutor {
       // Build robust match patterns from the provided URL.
       // This mirrors the approach in CloseTabsTool: ensure wildcard path and
       // add common variants (www/no-www, http/https) to handle real-world redirects.
+      // A www. prefix only makes sense for registrable domain names. IP
+      // addresses (v4/v6) and single-label hosts like "localhost" must never
+      // get a www. variant — doing so produces nonsense hosts such as
+      // "www.192.168.0.1" and can cause wrong-tab matches. See hangwin/mcp-chrome#270.
+      const hostSupportsWww = (host: string): boolean => {
+        const hostname = host.replace(/:\d+$/, ''); // strip optional :port
+        // IPv6 literal, e.g. [::1]
+        if (hostname.startsWith('[')) return false;
+        // IPv4 literal, e.g. 192.168.0.1
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return false;
+        // Single-label hosts (no dot), e.g. localhost
+        if (!hostname.includes('.')) return false;
+        // Already www-prefixed
+        if (hostname.startsWith('www.')) return false;
+        return true;
+      };
+
       const buildUrlPatterns = (input: string): string[] => {
         const patterns = new Set<string>();
         try {
@@ -155,20 +172,24 @@ class NavigateTool extends BaseBrowserToolExecutor {
             const pathWildcard = '/*';
 
             const hostNoWww = u.host.replace(/^www\./, '');
-            const hostWithWww = hostNoWww.startsWith('www.') ? hostNoWww : `www.${hostNoWww}`;
+            const hostWithWww = hostSupportsWww(hostNoWww) ? `www.${hostNoWww}` : null;
 
             // Keep original host
             patterns.add(`${u.protocol}//${u.host}${pathWildcard}`);
             // Add no-www variant
             patterns.add(`${u.protocol}//${hostNoWww}${pathWildcard}`);
-            // Add www variant
-            patterns.add(`${u.protocol}//${hostWithWww}${pathWildcard}`);
+            // Add www variant only for registrable domains
+            if (hostWithWww) {
+              patterns.add(`${u.protocol}//${hostWithWww}${pathWildcard}`);
+            }
 
             // Add protocol variant to catch http↔https redirects
             const altProtocol = u.protocol === 'https:' ? 'http:' : 'https:';
             patterns.add(`${altProtocol}//${u.host}${pathWildcard}`);
             patterns.add(`${altProtocol}//${hostNoWww}${pathWildcard}`);
-            patterns.add(`${altProtocol}//${hostWithWww}${pathWildcard}`);
+            if (hostWithWww) {
+              patterns.add(`${altProtocol}//${hostWithWww}${pathWildcard}`);
+            }
           } else {
             patterns.add(input);
           }
