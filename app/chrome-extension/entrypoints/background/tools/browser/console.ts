@@ -2,7 +2,12 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
-import { consoleBuffer, BufferedConsoleMessage, BufferedConsoleException } from './console-buffer';
+import {
+  consoleBuffer,
+  BufferedConsoleMessage,
+  BufferedConsoleException,
+  normalizeLevels,
+} from './console-buffer';
 
 const DEFAULT_MAX_MESSAGES = 100;
 
@@ -23,6 +28,9 @@ interface ConsoleToolParams {
   pattern?: string;
   onlyErrors?: boolean;
   limit?: number;
+  // 新增：按级别和时间过滤（#253）
+  levels?: string[]; // e.g. ['error', 'warning']; takes precedence over onlyErrors
+  since?: number; // only return entries with timestamp strictly greater than this
 }
 
 interface ConsoleMessage {
@@ -97,21 +105,43 @@ function isErrorLevel(level?: string): boolean {
 
 function applyResultFilters(
   result: ConsoleResult,
-  options: { pattern?: RegExp; onlyErrors?: boolean; includeExceptions: boolean },
+  options: {
+    pattern?: RegExp;
+    onlyErrors?: boolean;
+    includeExceptions: boolean;
+    levels?: string[];
+    since?: number;
+  },
 ): ConsoleResult {
   const { pattern, onlyErrors = false, includeExceptions } = options;
+  const levelSet = normalizeLevels(options.levels);
+  const sinceTs =
+    typeof options.since === 'number' && Number.isFinite(options.since) ? options.since : null;
 
   let messages = result.messages;
-  if (onlyErrors) {
+  // levels takes precedence over the coarse onlyErrors flag (#253).
+  if (levelSet) {
+    messages = messages.filter((m) => levelSet.has((m.level || '').toLowerCase()));
+  } else if (onlyErrors) {
     messages = messages.filter((m) => isErrorLevel(m.level));
+  }
+  if (sinceTs !== null) {
+    messages = messages.filter((m) => m.timestamp > sinceTs);
   }
   if (pattern) {
     messages = messages.filter((m) => matchesPattern(pattern, m.text || ''));
   }
 
-  let exceptions = includeExceptions ? result.exceptions : [];
-  if (includeExceptions && pattern) {
-    exceptions = exceptions.filter((e) => matchesPattern(pattern, e.text || ''));
+  // Exceptions carry no level; only drop them when restricting to non-error levels.
+  const exceptionsAllowedByLevels = !levelSet || levelSet.has('error') || levelSet.has('assert');
+  let exceptions = includeExceptions && exceptionsAllowedByLevels ? result.exceptions : [];
+  if (exceptions.length) {
+    if (sinceTs !== null) {
+      exceptions = exceptions.filter((e) => e.timestamp > sinceTs);
+    }
+    if (pattern) {
+      exceptions = exceptions.filter((e) => matchesPattern(pattern, e.text || ''));
+    }
   }
 
   return {
@@ -157,6 +187,8 @@ class ConsoleTool extends BaseBrowserToolExecutor {
       pattern,
       onlyErrors = false,
       limit,
+      levels,
+      since,
     } = args;
 
     let targetTab: chrome.tabs.Tab;
@@ -233,6 +265,8 @@ class ConsoleTool extends BaseBrowserToolExecutor {
           onlyErrors,
           limit: effectiveLimit,
           includeExceptions,
+          levels,
+          since,
         });
 
         if (!read) {
@@ -292,6 +326,8 @@ class ConsoleTool extends BaseBrowserToolExecutor {
         pattern: compiledPattern,
         onlyErrors,
         includeExceptions,
+        levels,
+        since,
       });
 
       return {

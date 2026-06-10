@@ -1131,6 +1131,17 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Only return error-level console messages (and exceptions when includeExceptions=true). Default: false.',
         },
+        levels: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "Filter messages to these console levels (case-insensitive), e.g. ['error','warning','info','log','debug']. Takes precedence over onlyErrors. Exceptions are kept only when 'error'/'assert' is included.",
+        },
+        since: {
+          type: 'number',
+          description:
+            'Only return entries whose timestamp is strictly greater than this value. Pass the captureEndTime (or the last message timestamp) from a previous call to fetch only NEW logs and avoid old logs flooding the context.',
+        },
         limit: {
           type: 'number',
           description:

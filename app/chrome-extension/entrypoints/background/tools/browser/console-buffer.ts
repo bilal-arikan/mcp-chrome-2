@@ -47,6 +47,17 @@ export interface ConsoleBufferReadOptions {
   onlyErrors?: boolean;
   limit?: number;
   includeExceptions?: boolean;
+  /**
+   * Restrict results to these console levels (case-insensitive), e.g.
+   * ['error', 'warning']. Takes precedence over onlyErrors. See #253.
+   */
+  levels?: string[];
+  /**
+   * Only return messages/exceptions with timestamp strictly greater than this
+   * value. Lets callers fetch "only new logs since the last read" without the
+   * old logs flooding the context. See #253.
+   */
+  since?: number;
 }
 
 export interface ConsoleBufferReadResult {
@@ -79,6 +90,21 @@ function extractHostname(url?: string): string {
 function isErrorLevel(level?: string): boolean {
   const normalized = (level || '').toLowerCase();
   return normalized === 'error' || normalized === 'assert';
+}
+
+/**
+ * Normalize a requested level list into a lowercase Set. Returns null when no
+ * usable levels were provided so callers can skip the filter. See #253.
+ */
+export function normalizeLevels(levels?: string[]): Set<string> | null {
+  if (!Array.isArray(levels) || levels.length === 0) return null;
+  const set = new Set(
+    levels
+      .filter((l): l is string => typeof l === 'string')
+      .map((l) => l.trim().toLowerCase())
+      .filter((l) => l.length > 0),
+  );
+  return set.size > 0 ? set : null;
 }
 
 function matchesPattern(pattern: RegExp, text: string): boolean {
@@ -213,15 +239,23 @@ class ConsoleBuffer {
     const state = this.buffers.get(tabId);
     if (!state) return null;
 
-    const { pattern, onlyErrors = false, limit, includeExceptions = true } = options;
+    const { pattern, onlyErrors = false, limit, includeExceptions = true, since } = options;
+    const levelSet = normalizeLevels(options.levels);
+    const sinceTs = typeof since === 'number' && Number.isFinite(since) ? since : null;
 
     const totalBufferedMessages = state.messages.length;
     const totalBufferedExceptions = state.exceptions.length;
 
     // 过滤消息
     let messages = state.messages;
-    if (onlyErrors) {
+    // levels takes precedence over the coarse onlyErrors flag. See #253.
+    if (levelSet) {
+      messages = messages.filter((m) => levelSet.has((m.level || '').toLowerCase()));
+    } else if (onlyErrors) {
       messages = messages.filter((m) => isErrorLevel(m.level));
+    }
+    if (sinceTs !== null) {
+      messages = messages.filter((m) => m.timestamp > sinceTs);
     }
     if (pattern) {
       messages = messages.filter((m) => matchesPattern(pattern, m.text || ''));
@@ -242,8 +276,14 @@ class ConsoleBuffer {
 
     // 过滤异常
     let exceptions: BufferedConsoleException[] = [];
-    if (includeExceptions) {
+    // Exceptions have no console level, so the levels filter only excludes them
+    // when the caller restricted to non-error levels (e.g. ['warning']).
+    const exceptionsAllowedByLevels = !levelSet || levelSet.has('error') || levelSet.has('assert');
+    if (includeExceptions && exceptionsAllowedByLevels) {
       exceptions = state.exceptions;
+      if (sinceTs !== null) {
+        exceptions = exceptions.filter((e) => e.timestamp > sinceTs);
+      }
       if (pattern) {
         exceptions = exceptions.filter((e) => matchesPattern(pattern, e.text || ''));
       }
