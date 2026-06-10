@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to ~/.chrome-mcp-agent/tool-policy.json or point CHROME_MCP_TOOL_POLICY at this file. Unlisted tools follow the top-level 'default' (allow). Set 'default' to 'deny' for allow-list mode.",
+  "default": "allow",
+  "tools": {
+    "chrome_inject_script": { "decision": "deny" },
+    "chrome_bookmark_delete": { "decision": "deny" }
+  }
+}

@@ -7,6 +7,7 @@ import {
 import nativeMessagingHostInstance from '../native-messaging-host';
 import { NativeMessageType, TOOL_SCHEMAS } from 'chrome-mcp-shared';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { isToolAllowed, loadToolPolicy } from './tool-policy';
 
 async function listDynamicFlowTools(): Promise<Tool[]> {
   try {
@@ -67,10 +68,15 @@ async function listDynamicFlowTools(): Promise<Tool[]> {
 }
 
 export const setupTools = (server: Server) => {
-  // List tools handler
+  // List tools handler. Denied tools are hidden so agents never discover them.
+  // See hangwin/mcp-chrome#320.
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const policy = loadToolPolicy();
     const dynamicTools = await listDynamicFlowTools();
-    return { tools: [...TOOL_SCHEMAS, ...dynamicTools] };
+    const tools = [...TOOL_SCHEMAS, ...dynamicTools].filter((tool) =>
+      isToolAllowed(tool.name, policy),
+    );
+    return { tools };
   });
 
   // Call tool handler
@@ -81,6 +87,20 @@ export const setupTools = (server: Server) => {
 
 const handleToolCall = async (name: string, args: any): Promise<CallToolResult> => {
   try {
+    // Defense-in-depth: reject denied tools even if a client calls them directly
+    // (the tool is already hidden from ListTools). See hangwin/mcp-chrome#320.
+    if (!isToolAllowed(name)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Tool "${name}" is disabled by the server tool policy.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
     // If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
     if (name && name.startsWith('flow.')) {
       // We need to resolve flow by slug to ID
