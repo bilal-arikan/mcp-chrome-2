@@ -8,6 +8,7 @@ export const TOOL_NAMES = {
     SCREENSHOT: 'chrome_screenshot',
     CLOSE_TABS: 'chrome_close_tabs',
     SWITCH_TAB: 'chrome_switch_tab',
+    TARGET_TAB: 'chrome_target_tab',
     WEB_FETCHER: 'chrome_get_web_content',
     CLICK: 'chrome_click_element',
     FILL: 'chrome_fill_or_select',
@@ -522,6 +523,29 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['tabId'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.TARGET_TAB,
+    description:
+      'Pin a specific tab as the agent target so all subsequent tools that omit ' +
+      'an explicit tabId act on it, regardless of which window the user focuses. ' +
+      'Use this to drive a background tab in one window while the user works in ' +
+      'another. Call with {tabId} to pin, {clear:true} to release, or {} to query ' +
+      'the current pin.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: {
+          type: 'number',
+          description: 'The ID of the tab to pin as the agent target.',
+        },
+        clear: {
+          type: 'boolean',
+          description: 'Set true to release the current pinned target tab.',
+        },
+      },
+      required: [],
     },
   },
   {

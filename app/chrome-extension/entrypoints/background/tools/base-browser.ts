@@ -1,7 +1,7 @@
 import { ToolExecutor } from '@/common/tool-handler';
 import type { ToolResult } from '@/common/tool-handler';
 import { TIMEOUTS, ERROR_MESSAGES } from '@/common/constants';
-import { getDrivenTab } from './active-tab-tracker';
+import { getTargetTab } from './active-tab-tracker';
 
 const PING_TIMEOUT_MS = 300;
 
@@ -125,14 +125,14 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
   }
 
   /**
-   * Get the active tab. Prefers the most recently driven tab (navigate/switch)
-   * to stay deterministic across multiple windows, where `currentWindow` can
-   * resolve to a stale/unexpected window. Falls back to the currentWindow
-   * active tab. Throws when none is found.
+   * Get the active tab. Prefers the pinned target tab, then the most recently
+   * driven tab (navigate/switch), so resolution stays deterministic across
+   * multiple windows where `currentWindow` can resolve to a stale/unexpected
+   * window. Falls back to the currentWindow active tab. Throws when none found.
    */
   protected async getActiveTabOrThrow(): Promise<chrome.tabs.Tab> {
-    const driven = await getDrivenTab();
-    if (driven && typeof driven.id === 'number') return driven;
+    const target = await getTargetTab();
+    if (target && typeof target.id === 'number') return target;
     const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!active || !active.id) throw new Error('Active tab not found');
     return active;
@@ -158,17 +158,17 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
 
   /**
    * Get the active tab. When windowId provided, search within that window
-   * (explicit window wins, driven-tab is ignored to honor the caller's intent).
-   * Otherwise prefer the most recently driven tab, then fall back to the
-   * currentWindow active tab.
+   * (explicit window wins, pinned/driven tab is ignored to honor the caller's
+   * intent). Otherwise prefer the pinned target, then the most recently driven
+   * tab, then fall back to the currentWindow active tab.
    */
   protected async getActiveTabInWindow(windowId?: number): Promise<chrome.tabs.Tab | null> {
     if (typeof windowId === 'number') {
       const tabs = await chrome.tabs.query({ active: true, windowId });
       return tabs && tabs[0] ? tabs[0] : null;
     }
-    const driven = await getDrivenTab();
-    if (driven && typeof driven.id === 'number') return driven;
+    const target = await getTargetTab();
+    if (target && typeof target.id === 'number') return target;
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     return tabs && tabs[0] ? tabs[0] : null;
   }
