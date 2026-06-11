@@ -8,6 +8,7 @@ import { keyboardTool } from './keyboard';
 import { screenshotTool } from './screenshot';
 import { screenshotContextManager, scaleCoordinates } from '@/utils/screenshot-context';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
+import { createImageResponse } from '../image-content';
 import {
   captureFrameOnAction,
   isAutoCaptureActive,
@@ -1278,21 +1279,18 @@ class ComputerTool extends BaseBrowserToolExecutor {
           if (!base64Data) {
             return createErrorResponse('Failed to capture zoom screenshot via CDP');
           }
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  action: 'zoom',
-                  mimeType: 'image/png',
-                  base64Data,
-                  region: { x0: rx0, y0: ry0, x1: rx1, y1: ry1 },
-                }),
-              },
-            ],
-            isError: false,
-          };
+          // Return the zoomed region as a real MCP image block (small text
+          // summary only) to avoid dumping the base64 into the text channel.
+          return createImageResponse({
+            base64Data,
+            mimeType: 'image/png',
+            summary: {
+              success: true,
+              action: 'zoom',
+              mimeType: 'image/png',
+              region: { x0: rx0, y0: ry0, x1: rx1, y1: ry1 },
+            },
+          });
         } catch (e) {
           await CDPHelper.detach(tab.id);
           return createErrorResponse(`zoom failed: ${e instanceof Error ? e.message : String(e)}`);

@@ -10,6 +10,7 @@ import {
   compressImage,
 } from '../../../../utils/image-utils';
 import { screenshotContextManager } from '@/utils/screenshot-context';
+import { createImageResponse } from '../image-content';
 
 // Screenshot-specific constants
 const SCREENSHOT_CONSTANTS = {
@@ -292,15 +293,22 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
         // Include base64 data in response (without prefix)
         const base64Data = compressed.dataUrl.replace(/^data:image\/[^;]+;base64,/, '');
         results.base64 = base64Data;
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ base64Data, mimeType: compressed.mimeType }),
-            },
-          ],
-          isError: false,
-        };
+        // Return the image as a proper MCP image content block instead of a
+        // giant JSON text blob. A small text summary preserves metadata without
+        // dumping hundreds of KB of base64 into the text channel.
+        return createImageResponse({
+          base64Data,
+          mimeType: compressed.mimeType,
+          summary: {
+            success: true,
+            name,
+            tabId: tab.id,
+            url: tab.url,
+            mimeType: compressed.mimeType,
+            widthCss: finalImageWidthCss,
+            heightCss: finalImageHeightCss,
+          },
+        });
       }
 
       if (savePng === true) {

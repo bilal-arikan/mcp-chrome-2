@@ -31,10 +31,18 @@ export const screenshotNode: NodeRuntime<any> = {
     if (s.selector && typeof s.selector === 'string' && s.selector.trim())
       args.selector = s.selector;
     const res = await handleCallTool({ name: TOOL_NAMES.BROWSER.SCREENSHOT, args });
-    const text = (res as any)?.content?.find((c: any) => c.type === 'text')?.text;
+    // The screenshot tool now returns the image as an MCP `image` content block;
+    // read the base64 from there, with a legacy fallback to the old JSON text.
     try {
-      const payload = text ? JSON.parse(text) : null;
-      if (s.saveAs && payload && payload.base64Data) ctx.vars[s.saveAs] = payload.base64Data;
+      const content = (res as any)?.content;
+      const imageData = content?.find((c: any) => c.type === 'image')?.data;
+      let base64: string | undefined = typeof imageData === 'string' ? imageData : undefined;
+      if (!base64) {
+        const text = content?.find((c: any) => c.type === 'text')?.text;
+        const payload = text ? JSON.parse(text) : null;
+        if (payload && payload.base64Data) base64 = payload.base64Data;
+      }
+      if (s.saveAs && base64) ctx.vars[s.saveAs] = base64;
     } catch {}
     return {} as ExecResult;
   },
