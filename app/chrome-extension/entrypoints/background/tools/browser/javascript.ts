@@ -17,6 +17,7 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
+import { getPrivilegedTabError } from '../privileged-url';
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
   sanitizeAndLimitOutput,
@@ -425,6 +426,14 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
         return createErrorResponse('Tab has no ID');
       }
       const tabId = tab.id;
+
+      // Fail fast on privileged pages (chrome://, other extensions, web store)
+      // so we surface an actionable message instead of the opaque CDP error
+      // "Cannot access a chrome-extension:// URL of different extension".
+      const privilegedError = getPrivilegedTabError(tab);
+      if (privilegedError) {
+        return createErrorResponse(privilegedError);
+      }
 
       // Normalize options
       const options: ExecutionOptions = {

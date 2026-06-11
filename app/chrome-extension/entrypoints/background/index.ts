@@ -11,6 +11,7 @@ import { initWebEditorListeners } from './web-editor';
 import { initQuickPanelAgentHandler } from './quick-panel/agent-handler';
 import { initQuickPanelCommands } from './quick-panel/commands';
 import { initQuickPanelTabsHandler } from './quick-panel/tabs-handler';
+import { installActiveTabTrackerListeners } from './tools/active-tab-tracker';
 
 // Record-Replay V3 (feature flag)
 import { bootstrapV3 } from './record-replay-v3/bootstrap';
@@ -37,6 +38,9 @@ export default defineBackground(() => {
   });
 
   // Initialize core services
+  // Track the most recently driven tab so active-tab resolution stays
+  // deterministic across multiple windows.
+  installActiveTabTrackerListeners();
   initNativeHostListener();
   initSemanticSimilarityListener();
   initStorageManagerListener();

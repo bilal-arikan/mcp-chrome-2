@@ -2,6 +2,7 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { captureFrameOnAction, isAutoCaptureActive } from './gif-recorder';
+import { markTabDriven } from '../active-tab-tracker';
 
 // Default window dimensions
 const DEFAULT_WINDOW_WIDTH = 1280;
@@ -28,6 +29,9 @@ class NavigateTool extends BaseBrowserToolExecutor {
    * Trigger GIF auto-capture after successful navigation
    */
   private async triggerAutoCapture(tabId: number, url?: string): Promise<void> {
+    // Record this tab as the one the agent is now driving so subsequent tools
+    // that omit an explicit tabId resolve to it (deterministic across windows).
+    markTabDriven(tabId);
     if (!isAutoCaptureActive(tabId)) {
       return;
     }
@@ -667,6 +671,9 @@ class SwitchTabTool extends BaseBrowserToolExecutor {
       await chrome.tabs.update(tabId, { active: true });
 
       const updatedTab = await chrome.tabs.get(tabId);
+
+      // Mark as the freshly driven tab for deterministic active-tab resolution.
+      markTabDriven(tabId);
 
       return {
         content: [
