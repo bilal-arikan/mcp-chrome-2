@@ -1,5 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
+import { getTargetTab, getPinnedTabId } from '../active-tab-tracker';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 
@@ -70,7 +71,11 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
     const url = args.url;
     const selector = args.selector;
     const explicitTabId = args.tabId;
-    const background = args.background === true;
+    // When a target tab is pinned (chrome_target_tab), default to background so
+    // harvesting does not yank the user's focus to the pinned tab. An explicit
+    // `background` value always wins; with no pin the old default (false) holds.
+    const background =
+      typeof args.background === 'boolean' ? args.background : getPinnedTabId() !== null;
     const windowId = args.windowId;
     const waitForLoad = args.waitForLoad !== false; // default: true
     const waitTimeout =
@@ -122,15 +127,23 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
           }
         }
       } else {
-        // Use active tab (prefer specified window)
-        const tabs =
-          typeof windowId === 'number'
-            ? await chrome.tabs.query({ active: true, windowId })
-            : await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tabs[0]) {
-          return createErrorResponse('No active tab found');
+        // Honor a pinned/driven target tab first (set via chrome_target_tab),
+        // so tabId-less calls act on the agent's target instead of whatever the
+        // user is currently looking at. Fall back to the active tab (preferring
+        // a specified window) when nothing is pinned.
+        const target = await getTargetTab();
+        if (target?.id) {
+          tab = target;
+        } else {
+          const tabs =
+            typeof windowId === 'number'
+              ? await chrome.tabs.query({ active: true, windowId })
+              : await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!tabs[0]) {
+            return createErrorResponse('No active tab found');
+          }
+          tab = tabs[0];
         }
-        tab = tabs[0];
       }
 
       if (!tab.id) {
@@ -283,13 +296,15 @@ class GetInteractiveElementsTool extends BaseBrowserToolExecutor {
     console.log(`Starting get interactive elements with options:`, args);
 
     try {
-      // Get current tab
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tabs[0]) {
+      // Get current tab — honor a pinned/driven target tab first, then fall
+      // back to the active tab in the current window.
+      const target = await getTargetTab();
+      const tab = target?.id
+        ? target
+        : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+      if (!tab) {
         return createErrorResponse('No active tab found');
       }
-
-      const tab = tabs[0];
       if (!tab.id) {
         return createErrorResponse('Active tab has no ID');
       }
