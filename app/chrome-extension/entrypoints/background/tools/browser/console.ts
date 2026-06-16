@@ -177,7 +177,8 @@ class ConsoleTool extends BaseBrowserToolExecutor {
       url,
       tabId,
       windowId,
-      background = false,
+      // Default: stay in background (do not steal focus). Pass background:false to foreground.
+      background = true,
       includeExceptions = true,
       maxMessages = DEFAULT_MAX_MESSAGES,
       mode = 'snapshot',

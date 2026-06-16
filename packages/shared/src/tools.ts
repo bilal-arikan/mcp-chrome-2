@@ -425,7 +425,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         background: {
           type: 'boolean',
           description:
-            'Perform the operation without stealing focus (do not activate the tab or focus the window). Default: false',
+            'Stay in the background — do not activate the tab or focus the window. Default: true. Pass false to bring the tab/window to the foreground.',
         },
         width: {
           type: 'number',
@@ -564,7 +564,8 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         background: {
           type: 'boolean',
-          description: 'Do not activate tab/focus window while fetching (default: false)',
+          description:
+            'Stay in the background while fetching — do not activate tab/focus window. Default: true. Pass false to foreground the tab.',
         },
         htmlContent: {
           type: 'boolean',
@@ -1168,7 +1169,8 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         background: {
           type: 'boolean',
-          description: 'Do not activate tab/focus window when capturing via CDP. Default: false',
+          description:
+            'Stay in the background — do not activate tab/focus window. Default: true. Pass false to foreground the tab.',
         },
         includeExceptions: {
           type: 'boolean',

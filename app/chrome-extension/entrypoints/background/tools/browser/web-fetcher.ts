@@ -1,6 +1,7 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { getTargetTab, getPinnedTabId } from '../active-tab-tracker';
+import { getTargetTab } from '../active-tab-tracker';
+import { shouldForeground } from '../focus-policy';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 
@@ -71,11 +72,9 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
     const url = args.url;
     const selector = args.selector;
     const explicitTabId = args.tabId;
-    // When a target tab is pinned (chrome_target_tab), default to background so
-    // harvesting does not yank the user's focus to the pinned tab. An explicit
-    // `background` value always wins; with no pin the old default (false) holds.
-    const background =
-      typeof args.background === 'boolean' ? args.background : getPinnedTabId() !== null;
+    // Default: stay in background so harvesting never yanks the user's focus.
+    // Foreground only when the caller explicitly passes background:false.
+    const background = !shouldForeground(args.background);
     const windowId = args.windowId;
     const waitForLoad = args.waitForLoad !== false; // default: true
     const waitTimeout =

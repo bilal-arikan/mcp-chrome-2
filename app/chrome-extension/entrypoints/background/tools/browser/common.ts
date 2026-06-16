@@ -3,6 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { captureFrameOnAction, isAutoCaptureActive } from './gif-recorder';
 import { markTabDriven } from '../active-tab-tracker';
+import { shouldForeground } from '../focus-policy';
 
 // Default window dimensions
 const DEFAULT_WINDOW_WIDTH = 1280;
@@ -16,7 +17,7 @@ interface NavigateToolParams {
   refresh?: boolean;
   tabId?: number;
   windowId?: number;
-  background?: boolean; // when true, do not activate tab or focus window
+  background?: boolean; // default: stay in background. Pass false to bring tab/window to foreground.
 }
 
 /**
@@ -109,8 +110,8 @@ class NavigateTool extends BaseBrowserToolExecutor {
 
         // Respect background flag for focus behavior
         await this.ensureFocus(targetTab, {
-          activate: background !== true,
-          focusWindow: background !== true,
+          activate: shouldForeground(background),
+          focusWindow: shouldForeground(background),
         });
 
         if (url === 'forward') {
@@ -287,8 +288,8 @@ class NavigateTool extends BaseBrowserToolExecutor {
         }
         // Optionally bring to foreground based on background flag
         await this.ensureFocus(existingTab, {
-          activate: background !== true,
-          focusWindow: background !== true,
+          activate: shouldForeground(background),
+          focusWindow: shouldForeground(background),
         });
 
         console.log(`Activated existing Tab ID: ${existingTab.id}`);
@@ -326,7 +327,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
           url: url,
           width: typeof width === 'number' ? width : DEFAULT_WINDOW_WIDTH,
           height: typeof height === 'number' ? height : DEFAULT_WINDOW_HEIGHT,
-          focused: background === true ? false : true,
+          focused: shouldForeground(background),
         });
 
         if (newWindow && newWindow.id !== undefined) {
@@ -375,9 +376,9 @@ class NavigateTool extends BaseBrowserToolExecutor {
           const newTab = await chrome.tabs.create({
             url: url,
             windowId: targetWindow.id,
-            active: background === true ? false : true,
+            active: shouldForeground(background),
           });
-          if (background !== true) {
+          if (shouldForeground(background)) {
             await chrome.windows.update(targetWindow.id, { focused: true });
           }
 
@@ -414,7 +415,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
             url: url,
             width: DEFAULT_WINDOW_WIDTH,
             height: DEFAULT_WINDOW_HEIGHT,
-            focused: true,
+            focused: shouldForeground(background),
           });
 
           if (fallbackWindow && fallbackWindow.id !== undefined) {

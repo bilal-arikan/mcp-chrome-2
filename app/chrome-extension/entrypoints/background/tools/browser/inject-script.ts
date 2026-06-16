@@ -2,6 +2,7 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
 import { ExecutionWorld } from '@/common/constants';
+import { shouldForeground } from '../focus-policy';
 
 interface InjectScriptParam {
   url?: string;
@@ -80,8 +81,8 @@ class InjectScriptTool extends BaseBrowserToolExecutor {
         return createErrorResponse('Tab has no ID');
       }
 
-      // Optionally bring tab/window to foreground based on background flag
-      if (background !== true) {
+      // Foreground only when explicitly requested (background:false); default stays in background.
+      if (shouldForeground(background)) {
         await chrome.tabs.update(tab.id, { active: true });
         await chrome.windows.update(tab.windowId, { focused: true });
       }
