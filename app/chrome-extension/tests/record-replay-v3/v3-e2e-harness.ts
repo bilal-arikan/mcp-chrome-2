@@ -195,7 +195,7 @@ function createTestNodeDefinition(): NodeDefinition<'test', TestNodeConfig> {
     schema: z
       .object({
         action: z.enum(['succeed', 'fail']),
-        outputs: z.record(z.any()).optional(),
+        outputs: z.record(z.string(), z.any()).optional(),
         delayMs: z.number().optional(),
       })
       .passthrough() as z.ZodType<TestNodeConfig>,

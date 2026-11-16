@@ -32,12 +32,17 @@ export default tseslint.config(
 
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  // typescript-eslint 8.72 no longer guesses between the root and app tsconfig roots.
+  { languageOptions: { parserOptions: { tsconfigRootDir: import.meta.dirname } } },
   // Global rule adjustments
   {
     // Allow intentionally empty catch blocks (common in extension code),
     // while keeping other empty blocks reported.
     rules: {
       'no-empty': ['error', { allowEmptyCatch: true }],
+      // Rules added to eslint:recommended in ESLint 10; kept off to preserve the pre-upgrade rule set.
+      'no-useless-assignment': 'off',
+      'preserve-caught-error': 'off',
     },
   },
   {

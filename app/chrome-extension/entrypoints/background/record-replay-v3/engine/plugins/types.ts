@@ -17,7 +17,7 @@ import type { TriggerKind } from '../../domain/triggers';
  * Schema type
  * @description Uses Zod for configuration validation
  */
-export type Schema<T> = z.ZodType<T, z.ZodTypeDef, unknown>;
+export type Schema<T> = z.ZodType<T, unknown>;
 
 /**
  * Node execution context

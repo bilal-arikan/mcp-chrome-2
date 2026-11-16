@@ -150,14 +150,18 @@ export default defineConfig({
           {
             src: 'inject-scripts/*.js',
             dest: 'inject-scripts',
+            // vite-plugin-static-copy v4 preserves the source path; strip the leading folder
+            rename: { stripBase: 1 },
           },
           {
             src: ['workers/*'],
             dest: 'workers',
+            rename: { stripBase: 1 },
           },
           {
             src: '_locales/**/*',
             dest: '_locales',
+            rename: { stripBase: 1 },
           },
         ],
         // Use writeBundle so outDir exists for dev and prod

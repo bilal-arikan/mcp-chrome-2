@@ -1,3 +1,11 @@
 packages:
   - 'app/*'
   - 'packages/*'
+allowBuilds:
+  '@parcel/watcher': false
+  better-sqlite3: true
+  esbuild: true
+  protobufjs: false
+  sharp: false
+  spawn-sync: false
+  vue-demi: false

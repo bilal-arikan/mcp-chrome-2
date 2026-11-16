@@ -42,11 +42,16 @@ export default defineConfig([
     },
   },
   ...tseslint.configs.recommended,
+  // typescript-eslint 8.72 no longer guesses between the root and app tsconfig roots.
+  { languageOptions: { parserOptions: { tsconfigRootDir: import.meta.dirname } } },
   {
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unused-vars': 'off',
       'no-empty': 'off',
+      // Rules added to eslint:recommended in ESLint 10; kept off to preserve the pre-upgrade rule set.
+      'no-useless-assignment': 'off',
+      'preserve-caught-error': 'off',
     },
   },
   pluginVue.configs['flat/essential'],
